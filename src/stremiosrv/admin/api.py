@@ -31,9 +31,9 @@ router = APIRouter(prefix="/admin")
 _STARTED = time.monotonic()
 _STATIC = Path(__file__).with_name("static")
 _GITHUB_VERSION_URL = (
-    "https://raw.githubusercontent.com/andrewhack/stremio-libtorrent-server/main/pyproject.toml"
+    "https://raw.githubusercontent.com/emmanique/stremio-libtorrent-server-webadmin-dns/main/pyproject.toml"
 )
-_GITHUB_REPOSITORY_URL = "https://github.com/andrewhack/stremio-libtorrent-server"
+_GITHUB_REPOSITORY_URL = "https://github.com/emmanique/stremio-libtorrent-server-webadmin-dns"
 _github_version_cache: tuple[float, str | None] = (0.0, None)
 _github_version_lock = threading.Lock()
 _FIELDS = (

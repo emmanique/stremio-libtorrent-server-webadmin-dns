@@ -1,0 +1,67 @@
+# Stremio libtorrent streaming server — production compose (CPU/VAAPI-safe base).
+# This base starts on ANY host (no hard GPU requirement). For NVIDIA NVENC, add the overlay:
+#   docker compose -f compose.yaml -f compose.gpu.yaml up -d
+# (Or use ./docker/launch.sh, which auto-detects GPU and degrades gracefully.)
+services:
+  stremio-libtorrent-server:
+    build: .
+    #image: stremio-libtorrent-server:latest
+    container_name: stremio-libtorrent-server
+    restart: unless-stopped
+    environment:
+      # BitTorrent peer port. Override by exporting STREMIOSRV_BT_LISTEN_PORT (or setting it in .env);
+      # the published port below follows it automatically, so the listen and forwarded ports match.
+      STREMIOSRV_BT_LISTEN_PORT: "${STREMIOSRV_BT_LISTEN_PORT:-6881}"
+      STREMIOSRV_CACHE_ROOT: /root/.stremio-server
+      CERT_FILE: certificates.pem    # full-chain+key PEM in the cache dir; auto self-signed if absent
+      # Set IPADDRESS to your server's LAN IP for a TRUSTED, TV-compatible cert (Let's Encrypt via
+      # *.stremio.rocks). Leave empty to use a bring-your-own cert or self-signed.
+      IPADDRESS: ${IPADDRESS:-192.168.1.200}
+      SERVER_URL: ${SERVER_URL:-}    # web-player target; auto-set to the stremio.rocks URL when IPADDRESS is set
+      # Optional controlled update hook. Keep empty unless the image contains a trusted updater or
+      # this command calls a restricted host-side service. Never mount the unrestricted Docker socket.
+      STREMIOSRV_ADMIN_UPDATE_COMMAND: ${STREMIOSRV_ADMIN_UPDATE_COMMAND:-}
+    ports:
+      - "8080:8080"                  # web player + API (HTTP/LAN)
+      - "8090:8090"                  # web administration (HTTP/LAN)
+      - "11470:11470"              # streaming-server HTTP API
+      - "12470:12470"              # HTTPS (nginx TLS, when a cert is present)
+      # BitTorrent peer port (this server accepts INBOUND peers) — follows STREMIOSRV_BT_LISTEN_PORT
+      # so the forwarded port and the in-container listen port stay in sync. TCP + UDP (DHT / uTP).
+      - "${STREMIOSRV_BT_LISTEN_PORT:-6881}:${STREMIOSRV_BT_LISTEN_PORT:-6881}/tcp"
+      - "${STREMIOSRV_BT_LISTEN_PORT:-6881}:${STREMIOSRV_BT_LISTEN_PORT:-6881}/udp"
+    volumes:
+      # Set STREMIO_DATA_DIR to a host path (with certificates.pem) to reuse an existing cache+cert;
+      # otherwise a named volume is used.
+      - ${STREMIO_DATA_DIR:-stremio-cache}:/root/.stremio-server
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:11470/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    labels:
+      # Auto-discovery by the Application Health Monitor (AHM).
+      monitor.enabled: "true"
+      monitor.name: "stremio-libtorrent-server"
+      monitor.health.path: "/health"
+      monitor.health.port: "11470"
+
+  pihole:
+    image: pihole/pihole:latest
+    container_name: stremio-pihole
+    restart: unless-stopped
+    environment:
+      TZ: "${TZ:-Africa/Luanda}"
+      FTLCONF_webserver_api_password: ""
+      FTLCONF_dns_listeningMode: "all"
+      FTLCONF_dns_upstreams: "${PIHOLE_UPSTREAM_DNS:-1.1.1.1;1.0.0.1}"
+    ports:
+      - "${IPADDRESS}:53:53/tcp"
+      - "${IPADDRESS}:53:53/udp"
+      - "${IPADDRESS}:${PIHOLE_WEB_PORT:-8053}:80/tcp"
+    volumes:
+      - pihole-etc:/etc/pihole
+
+volumes:
+  stremio-cache:
+  pihole-etc:

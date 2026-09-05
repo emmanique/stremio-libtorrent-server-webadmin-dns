@@ -1,0 +1,29 @@
+# Self-host with a VPN: only the streaming server's traffic is tunneled through gluetun.
+# Fill the gluetun env for your provider (https://github.com/qdm12/gluetun-wiki). Example: ProtonVPN/WireGuard.
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    environment:
+      VPN_SERVICE_PROVIDER: protonvpn
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: "${WIREGUARD_PRIVATE_KEY}"
+      WIREGUARD_ADDRESSES: "${WIREGUARD_ADDRESSES}"
+      VPN_PORT_FORWARDING: "on"
+      FIREWALL_OUTBOUND_SUBNETS: "192.168.0.0/16,10.0.0.0/8"  # your LAN(s) so the player/admin stay reachable
+    ports:
+      - "8080:8080"
+      - "11470:11470"
+      - "12470:12470"
+      - "127.0.0.1:8000:8000"   # gluetun control API (localhost only)
+  stremio:
+    image: androshack/stremio-libtorrent-server:latest
+    network_mode: "service:gluetun"
+    depends_on: [gluetun]
+    environment:
+      IPADDRESS: "${IPADDRESS}"   # your LAN IP for the trusted cert
+    volumes:
+      - stremio-data:/root/.stremio-server
+volumes:
+  stremio-data:

@@ -1,0 +1,127 @@
+#!/bin/sh
+# All-in-one: the bundled Stremio web player + our libtorrent streaming server on one origin —
+# HTTP :8080 (LAN) and HTTPS :12470 (cert). uvicorn (API) stays internal on :11470.
+set -e
+
+CACHE="${STREMIOSRV_CACHE_ROOT:-/root/.stremio-server}"
+CERT="$CACHE/${CERT_FILE:-certificates.pem}"
+
+# Capture the complete container stdout/stderr in a persistent source while preserving Docker's
+# own stdout stream. This is the same application output visible through `docker logs`, without
+# granting the Web Admin access to the Docker socket or daemon API.
+mkdir -p "$CACHE/logs"
+CONTAINER_LOG="$CACHE/logs/container.log"
+if [ -f "$CONTAINER_LOG" ] && [ "$(wc -c < "$CONTAINER_LOG")" -gt 5242880 ]; then
+    tail -c 5242880 "$CONTAINER_LOG" > "${CONTAINER_LOG}.tmp"
+    mv "${CONTAINER_LOG}.tmp" "$CONTAINER_LOG"
+fi
+CONTAINER_PIPE="/tmp/stremio-container-log.pipe"
+rm -f "$CONTAINER_PIPE"
+mkfifo "$CONTAINER_PIPE"
+tee -a "$CONTAINER_LOG" < "$CONTAINER_PIPE" &
+CONTAINER_TEE_PID=$!
+trap 'rm -f "$CONTAINER_PIPE"; kill "$CONTAINER_TEE_PID" 2>/dev/null || true' EXIT
+exec > "$CONTAINER_PIPE" 2>&1
+
+# The UI persists this flag in admin-settings.json. An explicit environment variable wins, which
+# lets an operator recover diagnostics even if the UI is unavailable.
+DEBUG_LOGS=$(/srv/app/.venv/bin/python - "$CACHE/admin-settings.json" <<'PY'
+import json
+import os
+import sys
+
+raw = os.getenv("STREMIOSRV_DEBUG_LOGS")
+if raw is None:
+    try:
+        raw = json.load(open(sys.argv[1], encoding="utf-8")).get("debug_logs", False)
+    except (OSError, ValueError, TypeError):
+        raw = False
+enabled = raw if isinstance(raw, bool) else str(raw).lower() in {"1", "true", "yes", "on"}
+print("true" if enabled else "false")
+PY
+)
+if [ "$DEBUG_LOGS" = "true" ]; then
+    APP_LOG_LEVEL="debug"
+    APP_ACCESS_LOG="--access-log"
+    NGINX_LOG_LEVEL="debug"
+else
+    APP_LOG_LEVEL="info"
+    APP_ACCESS_LOG="--no-access-log"
+    NGINX_LOG_LEVEL="warn"
+fi
+echo "[entrypoint] logging profile: $([ "$DEBUG_LOGS" = "true" ] && echo DEBUG || echo NORMAL)"
+
+# 1) TLS cert for HTTPS :12470. TVs require a TRUSTED cert; priority:
+#    a. IPADDRESS set -> fetch/refresh a trusted Let's Encrypt *.stremio.rocks cert (TV-compatible,
+#       zero config; the dashed-IP subdomain resolves to your IP via Stremio's magic DNS).
+#    b. else a cert already at $CERT -> bring-your-own.
+#    c. else -> self-signed (HTTPS still starts, but browsers warn and TVs reject).
+mkdir -p "$CACHE"
+if [ -n "${IPADDRESS}" ]; then
+    echo "[entrypoint] IPADDRESS=$IPADDRESS -> fetching trusted stremio.rocks cert"
+    # Time-box the fetch: on an offline / isolated (LAN-only, static-IP) network it would otherwise
+    # hang on DNS/HTTP timeouts and block uvicorn from ever starting. On timeout we fall through to
+    # the existing/self-signed cert so the server still comes up on the LAN.
+    if (cd /srv/stremio-server && timeout 30 node certificate.js --action fetch); then
+        IPD=$(echo "$IPADDRESS" | sed "s/[.]/-/g")
+        SROCKS_DOMAIN="${IPD}.519b6502d940.stremio.rocks"
+        cp /srv/stremio-server/certificates.pem "$CERT"
+        grep -q "$SROCKS_DOMAIN" /etc/hosts 2>/dev/null || echo "${IPADDRESS} ${SROCKS_DOMAIN}" >> /etc/hosts
+        (cd /srv/stremio-server && node certificate.js --action load \
+            --pem-path "$CERT" --domain "$SROCKS_DOMAIN" --json-path "$CACHE/httpsCert.json") || true
+        echo "[entrypoint] trusted cert for $SROCKS_DOMAIN"
+        [ -z "${SERVER_URL}" ] && SERVER_URL="https://${SROCKS_DOMAIN}:12470/"
+    else
+        echo "[entrypoint] stremio.rocks fetch failed -> falling back to existing/self-signed cert"
+    fi
+fi
+if [ -f "$CERT" ]; then
+    [ -n "${IPADDRESS}" ] || echo "[entrypoint] using existing cert $CERT (bring-your-own)"
+else
+    echo "[entrypoint] no trusted cert -> self-signed (CN=${DOMAIN:-localhost}); TVs may reject it"
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+        -keyout "${CERT}.key" -out "${CERT}.crt" -subj "/CN=${DOMAIN:-localhost}" >/dev/null 2>&1
+    cat "${CERT}.crt" "${CERT}.key" > "$CERT"
+    rm -f "${CERT}.key" "${CERT}.crt"
+fi
+
+# 2) Point the bundled web player at the streaming server (stock localStorage mechanism).
+SEED_SRC="/srv/stremio-server/localStorage.json"
+SEED_DST="/srv/stremio-server/build/localStorage.json"
+if [ -f "$SEED_SRC" ]; then
+    cp "$SEED_SRC" "$SEED_DST"
+    if [ -n "${SERVER_URL}" ]; then
+        case "$SERVER_URL" in */) ;; *) SERVER_URL="$SERVER_URL/" ;; esac
+        sed -i "s|http://127.0.0.1:11470/|${SERVER_URL}|g" "$SEED_DST"
+        echo "[entrypoint] web player -> $SERVER_URL"
+        # The v6 desktop app re-points itself at its bundled 127.0.0.1 server on every launch, so the
+        # Streaming Server URL won't stick. Launching it with a non-default --webui-url skips that
+        # injection; --development also stops the bundled server. Trusted (:12470) URL only.
+        echo "[entrypoint] desktop app -> add launch flags: --development --webui-url=$SERVER_URL"
+    else
+        echo "[entrypoint] web player -> default 127.0.0.1:11470 (set SERVER_URL for remote clients)"
+    fi
+fi
+
+# 3) Run uvicorn (API, internal :11470) + nginx (web player + API proxy on :8080 and :12470).
+mkdir -p /tmp/nx-proxy /tmp/nx-body "$CACHE/logs"
+# Keep debug files bounded across restarts. Preserve the most recent 5 MiB of each source.
+for LOG_FILE in "$CACHE/logs/application.log" "$CACHE/logs/nginx.log" "$CACHE/logs/admin.log" \
+                "$CACHE/logs/container.log" "$CACHE/admin-update.log"; do
+    if [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE")" -gt 5242880 ]; then
+        tail -c 5242880 "$LOG_FILE" > "${LOG_FILE}.tmp"
+        mv "${LOG_FILE}.tmp" "$LOG_FILE"
+    fi
+done
+# Render the cert path into the nginx config (honors a custom STREMIOSRV_CACHE_ROOT).
+sed -e "s#/root/.stremio-server/certificates.pem#${CERT}#g" \
+    -e "s#__LOG_LEVEL__#${NGINX_LOG_LEVEL}#g" \
+    /srv/app/docker/nginx-allinone.conf > /tmp/nginx-allinone.conf
+# Access requests are recorded only in the explicit DEBUG profile; normal mode avoids logging
+# infohash/stream paths and keeps operational warnings readable.
+/srv/app/.venv/bin/uvicorn stremiosrv.app:build_app --factory --host 0.0.0.0 --port 11470 \
+  --log-level "$APP_LOG_LEVEL" "$APP_ACCESS_LOG" 2>&1 | tee -a "$CACHE/logs/application.log" &
+APP_PID=$!
+nginx -c /tmp/nginx-allinone.conf -g 'daemon off;' \
+  2>&1 | tee -a "$CACHE/logs/nginx.log" &
+wait "$APP_PID"

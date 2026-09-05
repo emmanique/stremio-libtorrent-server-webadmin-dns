@@ -1,0 +1,36 @@
+# Runtime image: the libtorrent streaming server on the dual-GPU base
+# (jellyfin-ffmpeg with NVENC/VAAPI, nginx, GPU runtime). The base provides ffmpeg/ffprobe;
+# uv manages its own Python 3.12 venv (the system python on the 22.04 base is 3.10).
+# Base is published to Docker Hub so a clean from-scratch build works on any host (built from the
+# companion fork andrewhack/stremio-docker, Dockerfile.nvidia).
+FROM androshack/stremio-docker-dual:latest
+
+# uv (standalone binary; brings its own Python toolchain)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /srv/app
+# Dependency metadata first (better layer caching), then source.
+# LICENSE is not optional here: pyproject declares `license-files = ["LICENSE"]`, so uv sync fails
+# with "glob `LICENSE` did not match any files" if it is missing from the context. Copying it also
+# means the image ships the licence alongside the software it grants rights to, which is the point.
+COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY src ./src
+COPY docker ./docker
+# Pin Python 3.12: libtorrent 2.0.11 only publishes cp312/cp313 wheels (no 3.14).
+RUN uv sync --no-dev --python 3.12 && chmod +x docker/entrypoint.sh
+
+ENV STREMIOSRV_CACHE_ROOT=/root/.stremio-server
+ENV PATH="/srv/app/.venv/bin:${PATH}"
+
+# 8080 = web player + API (HTTP/LAN); 11470 = direct API; 12470 = web player + API (HTTPS);
+# 6881 = BitTorrent peer port.
+EXPOSE 8080 8090 11470 12470 6881
+VOLUME ["/root/.stremio-server"]
+
+# Container health: the streaming API's /health (uvicorn on :11470). Baked into the image so any run
+# — bare `docker run`, compose, etc. — reports healthy/unhealthy in `docker ps` with no extra flags.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:11470/health || exit 1
+
+# Entrypoint runs uvicorn (http) + nginx TLS (https, when a cert is present).
+CMD ["/srv/app/docker/entrypoint.sh"]

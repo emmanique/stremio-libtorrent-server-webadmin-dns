@@ -1,0 +1,399 @@
+# 🎬 stremio-libtorrent-server
+
+### Your own Stremio streaming server — open, fast, and *yours*. One command to run it. 🚀
+
+Self-host the **complete Stremio experience** — the **web player** *and* a powerful, open
+**BitTorrent streaming engine** — in a single container on your own hardware. It's a **full torrent
+client**, not just a streamer: it downloads whole files and can **pin favorites to keep & seed**.
+Point any Stremio client (browser, Android TV, Tizen, webOS, desktop) at it and press play.
+
+No subscription. No tracking. No black box. **100% free and open — our gift to the community.** 💛
+
+> **Sharing back with the community. 💛** This is a real torrent client, so a title you started keeps
+> **downloading to completion and seeding (uploading) back to other Stremio users** even after you
+> close the player — that's how you help keep the swarm fast and healthy **for everyone**. Unpinned
+> titles are cleared automatically; **pin** the ones you'd like to keep sharing. Prefer to limit it?
+> Cap up/down bandwidth in the settings any time — your box, your call.
+
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-androshack%2Fstremio--libtorrent--server-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/androshack/stremio-libtorrent-server)
+[![License: MIT](https://img.shields.io/badge/License-MIT-3DA639.svg)](LICENSE)
+
+---
+
+## Web administration (port 8090)
+
+Open `http://<server-ip>:8090` on the LAN. The dashboard shows live health, uptime, resource use,
+certificate status and active torrents; provides copy-ready Stremio URLs and a QR code; and applies
+seeding, stream and bandwidth limits without a restart. Changes are stored in the data volume as
+`admin-settings.json` and restored on the next start.
+
+Port 8090 has management actions and no built-in authentication. Publish it only on a trusted LAN
+or behind an authenticated reverse proxy/VPN; do not expose it directly to the Internet.
+
+## ✨ Why you'll love it
+
+- **🚀 Install in one command.** `docker run …` — that's the whole setup. No building, no config files.
+- **📺 Just works on TVs.** Automatic **trusted HTTPS** (a real Let's Encrypt cert) that smart TVs actually accept — zero certificate headaches.
+- **⚡ Faster, more reliable.** Unlike the closed stock server, this one **accepts inbound peers** and fetches **playhead-first**, so streams start quicker and hold up on thin swarms.
+- **🎛️ Truly yours to control.** Real dials for cache, buffering, peers, and transcode — tune deeply, or never touch a thing.
+- **🖥️ Hardware transcode, optional.** Intel **VAAPI** / NVIDIA **NVENC** when you expose a GPU to the container (opt-in — see [Advanced](#-advanced--tune-it-your-way)), with graceful CPU fallback — and a missing GPU never stops it from starting.
+- **🧩 Your addons, your choice.** It's **neutral infrastructure**: it streams whatever a Stremio addon hands it. It bundles no content and is not a source.
+- **🔓 Open source.** Read it, change it, trust it.
+
+---
+
+## 🚀 Quick Start — anyone can do this
+
+> **Architecture:** the published image is **`linux/amd64` (x86-64) only**. It runs on any normal
+> PC/server/NAS. ARM hosts (Raspberry Pi, most ARM TV boxes, Apple Silicon) aren't supported by the
+> prebuilt image — build from source on those.
+
+**1.** Install [Docker](https://docs.docker.com/get-docker/).
+**2.** Copy **one** command below — whichever matches your hardware — and replace `YOUR_SERVER_IP`
+with your machine's LAN IP (e.g. `192.168.1.50`). **Not sure which? Use the first one — it works on
+everything.** *(The GPU options only speed up the occasional video that needs converting; they're not required.)*
+
+**💻 No GPU — works everywhere (start here)**
+```sh
+docker run -d --name stremio --restart unless-stopped \
+  -e IPADDRESS=YOUR_SERVER_IP \
+  -p 8080:8080 -p 12470:12470 -p 6881:6881/tcp -p 6881:6881/udp \
+  -v stremio-data:/root/.stremio-server \
+  androshack/stremio-libtorrent-server
+```
+
+**🟦 Intel / AMD GPU (VAAPI)** — same, plus `--device /dev/dri`
+```sh
+docker run -d --name stremio --restart unless-stopped \
+  -e IPADDRESS=YOUR_SERVER_IP \
+  --device /dev/dri:/dev/dri \
+  -p 8080:8080 -p 12470:12470 -p 6881:6881/tcp -p 6881:6881/udp \
+  -v stremio-data:/root/.stremio-server \
+  androshack/stremio-libtorrent-server
+```
+
+**🟩 NVIDIA GPU (NVENC)** — plus `--gpus all` (first install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) on the host)
+```sh
+docker run -d --name stremio --restart unless-stopped \
+  -e IPADDRESS=YOUR_SERVER_IP \
+  --gpus all \
+  -p 8080:8080 -p 12470:12470 -p 6881:6881/tcp -p 6881:6881/udp \
+  -v stremio-data:/root/.stremio-server \
+  androshack/stremio-libtorrent-server
+```
+
+**🟦🟩 Both Intel + NVIDIA** — both flags
+```sh
+docker run -d --name stremio --restart unless-stopped \
+  -e IPADDRESS=YOUR_SERVER_IP \
+  --gpus all --device /dev/dri:/dev/dri \
+  -p 8080:8080 -p 12470:12470 -p 6881:6881/tcp -p 6881:6881/udp \
+  -v stremio-data:/root/.stremio-server \
+  androshack/stremio-libtorrent-server
+```
+
+**3.** Open it:
+- 🌐 **In a browser (same network):** `http://YOUR_SERVER_IP:8080` — *browser playback covers MP4/H.264; for MKV/HEVC content use the **desktop or TV** apps (browsers can't decode those).*
+- 🔒 **Trusted HTTPS (and TVs):** run `docker logs stremio` and use the printed URL — **it looks like**
+  `https://192-168-1-50.519b6502d940.stremio.rocks:12470` *(replace `192-168-1-50` with your internal IP, dots written as dashes)*.
+
+Sign into Stremio, add your addons, press play. 🍿
+*(Prefer a file? Grab [`compose.hub.yaml`](compose.hub.yaml) → `IPADDRESS=YOUR_SERVER_IP docker compose -f compose.hub.yaml up -d`.)*
+
+---
+
+## 🧰 Minimum hardware
+
+It's light — direct play (most content) barely touches the CPU; the GPU only matters for transcoding.
+
+| Resource | Minimum | Recommended | Notes |
+|---|---|---|---|
+| **CPU** | 2 cores, x86-64 | 4+ cores | `amd64` only. Transcoding (clients that can't direct-play) is the only heavy load. |
+| **RAM** | 1 GB | 2 GB+ | Engine + buffers + nginx; transcoding adds ~0.5–1 GB. |
+| **Disk** | ~3 GB + cache | SSD, cache ≥ largest file | Image ~1.5 GB; download cache defaults to **18 GiB** (tune with `STREMIOSRV_CACHE_SIZE`). Keep free space ≥ your biggest single file. |
+| **GPU** | none | Intel VAAPI / NVIDIA NVENC | Optional — only speeds up transcoding; a missing/broken GPU never blocks startup. |
+| **Network** | any | wired + `6881` forwarded | Wired beats Wi-Fi for 4K; forward port `6881` for the full swarm (see below). |
+
+---
+
+## 📺 On your TV
+
+Smart TVs insist on a **trusted** HTTPS connection — a self-signed cert won't do. Set `IPADDRESS`
+and this server fetches a real Let's Encrypt certificate for you automatically (via Stremio's
+`*.stremio.rocks` magic DNS, which maps that long URL back to your server's IP — even on your LAN).
+In the TV's Stremio app, set the **Streaming Server URL** to the `…stremio.rocks:12470` address shown
+by `docker logs stremio`.
+
+> **Note — the Stremio _desktop_ app (v6).** The desktop shell launches its own bundled streaming
+> server and re‑points itself at `127.0.0.1:11470` on **every** start — it injects a
+> `?streamingServerUrl=` parameter that overwrites the saved URL — so simply setting the Streaming
+> Server URL doesn't stick. (This is the shell's behaviour, not a `serverVersion` gate — that part is
+> already correct.) Two ways to use **this** box from the desktop:
+>
+> - **Best — launch with a flag** *(native player, full MKV/HEVC):* start Stremio with
+>   `--development --webui-url=<your …stremio.rocks:12470 URL>` (the trusted URL from
+>   `docker logs stremio`). A non‑default `--webui-url` skips the localhost injection and loads the
+>   player from this box; `--development` also skips the unused bundled server. Add the flag to your
+>   shortcut and launch from it each time. It **must** be the **trusted** `:12470` URL — a self‑signed
+>   cert is refused. After signing into your account, relaunch via the shortcut (login resets the URL).
+> - **Zero‑install** *(MP4/H.264 only):* open the `:12470` URL in a browser, or install it as an app.
+>
+> **TVs are unaffected** — Samsung/LG accept the `:12470` URL directly and it sticks.
+
+---
+
+## 🌍 Want the *full* swarm? Forward one port.
+
+A lot of BitTorrent's speed comes from peers reaching **you** — and home routers block that by
+default. For maximum peers and throughput, **forward port `6881` (TCP *and* UDP)** on your router to
+your server. It works fine without forwarding — you'll just reach fewer peers on sparse torrents.
+(Unlike the stock server, this one actually *listens* for inbound peers, so the forward genuinely pays off.)
+
+---
+
+## 🔐 Run behind a VPN
+
+Tunnel only the streaming server's BitTorrent traffic through a VPN (kill-switch + optional
+port-forwarding) using [gluetun](https://github.com/qdm12/gluetun), while your LAN keeps reaching the
+player/admin directly:
+
+```bash
+WIREGUARD_PRIVATE_KEY=... WIREGUARD_ADDRESSES=10.2.0.2/32 IPADDRESS=<your-LAN-IP> \
+  docker compose -f compose.vpn.yaml up -d
+```
+
+Notes:
+- The VPN's **kill-switch** is on by default — if the tunnel drops, torrent traffic stops (no IP leak).
+- **Inbound peers / seeding** need a provider that supports **port-forwarding** (e.g. ProtonVPN, PIA,
+  AirVPN). Without it you still stream, but with outbound-only connectivity.
+- Set `FIREWALL_OUTBOUND_SUBNETS` to your LAN CIDR(s) so the player and admin stay reachable.
+
+---
+
+## 🔧 Advanced — tune it your way
+
+Everything is a plain `-e NAME=value` environment variable:
+
+> **Sizes and rates accept units.** `64GiB`, `512MiB`, `1.5GiB`, `2MiB` — or a plain byte count, which is what these have always taken and still do. Note `GiB` is binary while `GB`/`G` are decimal (`64G` is ~4.4 GiB *less* than `64GiB`), and a lowercase `b` does not mean bits: these are bytes, and the rate limits are bytes per second.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `IPADDRESS` | *(unset)* | Your server IP → auto **trusted TV cert** via `*.stremio.rocks`. Unset → self-signed. |
+| `SERVER_URL` | auto | URL the web player targets. Set for a custom domain. |
+| `STREMIOSRV_CACHE_SIZE` | `19327352832` (18 GiB) | Download-cache budget in bytes (LRU-evicted). Keep it **above your largest file**. |
+| `STREMIOSRV_CACHE_EVICT_GRACE` | `1800` | Seconds a torrent stays safe from eviction after it was last served. Raise it if a player buffers long enough between range requests that the title being watched ages out. |
+| `STREMIOSRV_TRANSCODE_GC_INTERVAL` | `300` | Seconds between sweeps of `transcode/`, where HLS segments land. That directory is exempt from cache eviction, so this is the only thing that reclaims it. |
+| `STREMIOSRV_TRANSCODE_GC_MAX_AGE` | `600` | Grace before an *unclaimed* transcode directory is deleted. A job with a live `ffmpeg` is kept no matter how old. Raise it only if you pause transcoded playback for long stretches. |
+| `STREMIOSRV_READAHEAD_BYTES` | `268435456` (256 MiB) | Playhead buffer — bigger absorbs more swarm jitter (fewer rebuffers). |
+| `STREMIOSRV_STREAM_PIECE_TIMEOUT` | `30` | Seconds a request waits for one piece **mid-stream** before ending the stream (the player then re-requests). Raise it on a slow or thinly-peered swarm where the piece does arrive, just late — but it cuts both ways: when the piece is never coming, this is how long playback freezes before the retry that would have recovered it. |
+| `STREMIOSRV_STREAM_FIRST_PIECE_TIMEOUT` | `120` | Same, for the **first** piece of a request — a cold start: the beginning of playback, or a seek into a region nothing has downloaded yet. |
+| `STREMIOSRV_BT_LISTEN_PORT` | `6881` | BitTorrent peer port (TCP **and** UDP, IPv4 **and** IPv6). The one to forward. **If you change it, publish the *same* port** — the compose files and `docker/launch.sh` follow this var automatically; a hand-rolled `docker run` must use matching `-p <port>:<port>/tcp -p <port>:<port>/udp` (mapping to a *different* container port silently kills inbound peering). |
+| `STREMIOSRV_BT_MAX_CONNECTIONS` | `400` | Max peer connections. |
+| `STREMIOSRV_DOWNLOAD_RATE_LIMIT` | `0` | Cap download throughput in **bytes/sec** (`0` = unlimited). E.g. `12500000` ≈ 100 Mbit/s. |
+| `STREMIOSRV_UPLOAD_RATE_LIMIT` | `0` | Cap upload throughput in **bytes/sec** (`0` = unlimited). Handy so seeding doesn't saturate your line. |
+| `STREMIOSRV_IDLE_DOWNLOAD_RATE_LIMIT` | `1048576` (1 MiB/s) | **Cross-torrent playback priority.** While *anything* is being streamed, every *other* (idle) torrent is capped to this many bytes/sec so the torrent you're watching wins the bandwidth. `0` disables it (idle torrents compete freely). |
+| `STREMIOSRV_MAX_STREAMS` | `0` | Max **concurrent playbacks** (distinct torrents being streamed). A new play past the cap gets `503`. `0` = unlimited. |
+| `STREMIOSRV_SEED_ON_COMPLETE` | `true` | Keep seeding after a torrent finishes (full torrent-client behaviour). `false` = **stop seeding + drop peers** the moment it completes. Pinned items always keep seeding. |
+| `STREMIOSRV_MAX_SEED_MINUTES` | `0` | Stop seeding this many **minutes after completion** (`0` = seed forever). Applies on top of `SEED_ON_COMPLETE`. |
+| `STREMIOSRV_EXTRA_TRACKERS` | *(empty)* | Extra trackers appended to **every** torrent (on top of the built-in defaults). Comma/space/newline-separated `udp://`/`http(s)://`/`ws(s)://` URLs. |
+| `STREMIOSRV_TRACKER_LIST_URL` | *(empty)* | Optional URL of a community tracker list (e.g. the raw [ngosang/trackerslist](https://github.com/ngosang/trackerslist) `trackers_best.txt`). Fetched in a **background thread** to keep the list current — best-effort, **never blocks startup or playback**; offline falls back to the last cached list, then the built-in defaults. Empty = fully static. |
+| `STREMIOSRV_TRACKER_LIST_REFRESH_HOURS` | `24` | How often the background tracker-list source re-fetches (only when a URL is set). |
+| `STREMIOSRV_DHT_BOOTSTRAP_NODES` | *(empty)* | Your own DHT entry points, `host:port,host:port`. Empty keeps libtorrent's built-in routers. Only used on a **first** boot — after that the server rejoins via its saved routing table (see below). |
+| `STREMIOSRV_ADAPTIVE_PICKING` | `false` | **Experimental.** While playing, relax strict sequential download to parallel once enough is buffered ahead of the playhead (harvests more swarm throughput), re-tightening to in-order when the buffer drains or on a seek — the playhead window stays deadline-rushed, so continuity is protected. Off by default; needs on-box tuning. |
+| `STREMIOSRV_PREFETCH_NEXT` | `false` | **Next-episode prefetch (opt-in).** Once you are into the last 10% of an episode **and** that episode is fully downloaded, quietly pull the start of the next episode in the same torrent so pressing Next starts instantly. Only applies to multi-episode packs — see below. |
+| `STREMIOSRV_PREFETCH_NEXT_FRACTION` | `0.05` | How much of the next episode to fetch, as a fraction of its size. |
+| `STREMIOSRV_PREFETCH_NEXT_MAX_BYTES` | `134217728` (128 MiB) | Ceiling on that head, so a very large episode doesn't pull 200 MB. |
+| `STREMIOSRV_PREFETCH_TRIGGER_FRACTION` | `0.90` | How far into the current episode the trigger sits. |
+| `STREMIOSRV_LIBRARY_UI` | `false` | **Opt-in download manager** at `/library` on the same origin as the web player: browse your Stremio library, download a title in full, and manage what is on disk as titles rather than folder names. Off by default — it is an authenticated page, so enabling it is a deliberate choice. See [docs/library-ui.md](docs/library-ui.md). |
+| `STREMIOSRV_LIBRARY_OWNER` | *(unset)* | Which Stremio account may use it — the account id or its email. Unset = the **first** account to sign in claims the server. |
+| `STREMIOSRV_LIBRARY_ALLOW_HTTP` | `false` | Allow the library UI without TLS. Its session cookie is `Secure`, so plain HTTP is refused unless you set this — only do so on a trusted LAN or behind a VPN. |
+| `DOMAIN` | `localhost` | CN for the self-signed cert (when not using `IPADDRESS`). |
+| `CERT_FILE` | `certificates.pem` | Bring-your-own cert (full-chain + key) filename in the data volume. |
+
+**Trackers & peer discovery.** Every torrent is announced to a curated set of public trackers (baked-in
+defaults) **plus DHT, LSD and PEX** — so a bare infohash finds peers even when the magnet carries no
+tracker, exactly like the stock Stremio server. Extend it two ways: add your own with
+`STREMIOSRV_EXTRA_TRACKERS`, or point `STREMIOSRV_TRACKER_LIST_URL` at a maintained list (e.g.
+[ngosang/trackerslist](https://github.com/ngosang/trackerslist)) to keep the set current — that fetch
+runs in a background thread and **never blocks startup or playback** (offline → last cached list → the
+built-in defaults). The bigger peering win, though, is **inbound connectivity**: forward
+`STREMIOSRV_BT_LISTEN_PORT` (6881) so you reach the whole swarm, not just what trackers hand back.
+
+**Your node remembers the network.** Joining the DHT needs an entry point, and with nothing saved
+that means a handful of bootstrap routers run by other people — every reboot, forever. So the
+server writes its DHT routing table to `<cache>/dht.state` (every 30s, and on shutdown) and
+restores it on start. A machine that has been online even once rejoins through hundreds of peers it
+already knows, with nobody else's server in the path. That matters most for a box that sits powered
+off for months and then gets plugged back in. A corrupt or missing file is not an error — it just
+falls back to a normal cold start. Set `STREMIOSRV_DHT_BOOTSTRAP_NODES` if you would rather not use
+the built-in routers for that first boot either.
+
+**Next-episode prefetch** (opt-in, off by default) pulls the head of the next episode in a pack so *Next* starts instantly — see [the full description on GitHub](https://github.com/andrewhack/stremio-libtorrent-server#next-episode-prefetch).
+
+<!--hub:skip-->
+### Next-episode prefetch
+
+Off by default. With `STREMIOSRV_PREFETCH_NEXT=true`, the server watches how much of the current
+episode's stream has been **read** and whether that episode is completely downloaded. Once reads pass
+90% **and** the episode is complete, it fetches the first 5% of the next video file in the same
+torrent (plus its last 4 MiB, so a trailing MP4 index doesn't stall the switch) at low background
+priority, then stops. Pressing Next starts from cache instead of from the swarm; the rest of the
+episode then downloads normally.
+
+Only one of those two conditions is a hard guarantee. Completeness is: prefetch can never take
+bandwidth from what you're watching, because by the time it runs that file needs none. The 90% mark
+is a best-effort proxy — bytes read, not where the viewer actually is — so a player that probes the
+end of the file on open (e.g. to read a trailing MP4 index) can satisfy it within the first seconds of
+an episode. That earliness is bounded (it can only ever pull the same small head+tail, never more) and
+harmless (the completeness gate still holds); it's just occasionally sooner than the 90% figure implies.
+
+**Scope:** this covers multi-episode **packs** — one torrent holding several episodes. When each
+episode is its own torrent, the next one's infohash has never been sent to the server (the streaming
+protocol carries only an infohash and a file index), so there is nothing to prefetch. A torrent with
+a single video file has no "next file" and is unaffected, which is how films opt out automatically.
+
+**One side effect:** with `STREMIOSRV_SEED_ON_COMPLETE=false`, a completed torrent is normally
+paused. Prefetch resumes it for as long as the head takes to arrive — so it will seed again briefly
+— and the seeding policy pauses it once more afterwards. With `STREMIOSRV_SEED_ON_COMPLETE=true` and
+`STREMIOSRV_MAX_SEED_MINUTES` set, arming has a quieter version of the same effect: the torrent is
+briefly "not finished" again while the head downloads, which resets the seed-time clock. A torrent
+already most of the way through its seed window gets that clock restarted, and can end up seeding up
+to `MAX_SEED_MINUTES` longer than expected after the head lands.
+
+**GPU transcode** (only for clients that can't direct-play). Docker does **not** expose the host GPU to a
+container by default, so the one-command install above is **CPU-only**. The server *auto-detects* a GPU,
+but only one you've handed in — so opt in at launch:
+- **Intel/AMD VAAPI** → add `--device /dev/dri:/dev/dri`
+- **NVIDIA NVENC** → add `--gpus all` (requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) on the host)
+- **Or just use [`docker/launch.sh`](docker/launch.sh)** — it probes the host and adds the right flags for you,
+  degrading gracefully (a broken or absent driver never blocks startup). Full NVIDIA driver + **Proxmox
+  passthrough** setup: [NVIDIA-GPU.md](https://github.com/andrewhack/stremio-docker/blob/main/NVIDIA-GPU.md) (companion fork).
+
+**Your own domain instead of stremio.rocks:** put a full-chain+key PEM as `certificates.pem` in the
+data volume, set `-e SERVER_URL=https://yourdomain:12470`, and leave `IPADDRESS` unset.
+
+**Tailscale (zero port-forwarding, trusted HTTPS):** if you reach the server over a [Tailscale](https://tailscale.com)
+tailnet, you can skip both port-forwarding *and* the `*.stremio.rocks` dependency. Provision a cert for the
+node's MagicDNS name (`tailscale cert <node>.<tailnet>.ts.net`), concatenate the cert + key into one PEM,
+drop it in the data volume as `certificates.pem`, and set `-e SERVER_URL=https://<node>.<tailnet>.ts.net:12470`
+with `IPADDRESS` unset. Point your devices' Stremio **Streaming Server URL** at that tailnet address — works
+across your own devices and anyone you share the tailnet with, with a browser/TV-trusted cert.
+
+**Ports:** `8080` web+API (HTTP/LAN) · `12470` web+API (HTTPS) · `11470` direct API · `6881` BitTorrent.
+
+📖 Full ops guide: [`docs/DEVOPS.md`](docs/DEVOPS.md) · TLS deep-dive: [`docs/cert-guide.md`](docs/cert-guide.md).
+
+---
+
+<!--/hub:skip-->
+## 🧠 Why it exists
+
+The stock Stremio streaming server is closed-source and, in practice:
+- **outbound-only** — it never listens for inbound peers, so you only reach the connectable half of a swarm;
+- it **hides the torrent levers** — no real control over piece picking, connectivity, or cache.
+
+This opens it up: **inbound connectivity + playhead-first piece picking** for faster starts and better
+reliability on sparse swarms, **plus** hardware transcode for clients that can't direct-play — all in
+an image you run yourself. It is **content-neutral infrastructure**: it streams whatever infohash a
+Stremio *addon* hands it, and bundles or surfaces nothing.
+
+## 🏗️ Under the hood
+
+One image, two source repos. The runtime image is built **`FROM`** a GPU/ffmpeg base (the companion
+fork) and layers the open server on top:
+
+```
+┌─────────────── stremio-docker-dual  (companion fork, MIT) ──────────────┐
+│ jellyfin-ffmpeg (NVENC/VAAPI) · nginx · bundled Stremio web player        │
+└───────────────────────────────▲──────────────────────────────────────────┘
+                                 │ FROM
+┌─────────────── stremio-libtorrent-server  (this repo) ──────────────────┐
+│ FastAPI + libtorrent engine · nginx serves web player + proxies the API   │
+│ → one container: web player + open engine on a single origin              │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+Companion fork: **[andrewhack/stremio-docker](https://github.com/andrewhack/stremio-docker)**
+(builds the `stremio-docker-dual` image; see its [`NVIDIA-GPU.md`](https://github.com/andrewhack/stremio-docker/blob/main/NVIDIA-GPU.md) for GPU/Proxmox setup).
+
+Modules: `api/` (Stremio HTTP API) · `torrent/` (libtorrent + piece-picker) · `stream/` (Range file
+server) · `transcode/` (ffmpeg NVENC/VAAPI → HLS) · `config.py` · `health.py`. Protocol reference:
+[`docs/protocol-map.md`](docs/protocol-map.md).
+
+<!--hub:skip-->
+## ✅ Status
+
+All stages shipped and verified on hardware:
+
+| Stage | Scope | State |
+|---|---|---|
+| 0–1 | Protocol map · FastAPI skeleton · `/health` | ✅ |
+| 2 | Torrent core + direct play (inbound peers, head & holes, Range serving, stats) | ✅ |
+| 3 | Transcode / HLS (`hlsv2`, NVENC/VAAPI) | ✅ |
+| 4 | Subtitles · `opensubHash` · casting | ✅ |
+| 5 | Productionise — compose, DEVOPS, healthcheck, AHM | ✅ |
+| 6 | All-in-one (web player + engine) · TV-trusted SSL · GPU-optional · Docker Hub | ✅ |
+
+## 🛠️ Development
+
+```bash
+uv sync
+uv run pytest -q          # unit tests
+uv run ruff check .       # lint
+uv run uvicorn stremiosrv.app:create_app --factory --host 0.0.0.0 --port 11470
+```
+<!--/hub:skip-->
+
+How the TV HTTPS URL works (`*.stremio.rocks`), and the shared third-party hostname it relies on, are explained in the [README on GitHub](https://github.com/andrewhack/stremio-libtorrent-server#-appendix--how-the-tv-https-url-works-stremiorocks).
+
+<!--hub:skip-->
+## 🔐 Appendix — how the TV HTTPS URL works (`*.stremio.rocks`)
+
+*Skip this unless you're curious or customizing certs — the Quick Start needs none of it.*
+
+When you set `IPADDRESS`, the container prints a TV-ready HTTPS URL like:
+
+```
+https://192-168-1-50.519b6502d940.stremio.rocks:12470
+        └────┬─────┘ └────┬─────┘ └─────┬─────┘ └─┬─┘
+          your IP,     shared ID     Stremio's    HTTPS
+          dashed       (see below)   free DNS     port
+```
+
+- **`192-168-1-50`** — your server's IP with dots turned into dashes.
+- **`…stremio.rocks`** — a free service Stremio runs that (a) resolves `<dashed-ip>.…stremio.rocks`
+  back to that IP (even a LAN IP — no DNS setup by you), and (b) carries a **trusted Let's Encrypt
+  wildcard cert**, so TVs/browsers accept the HTTPS connection with no warning.
+- **`:12470`** — the container's HTTPS port.
+
+A TV opening it → resolves to your server's IP → connects on `12470` → sees a trusted cert → connects.
+The name resolves to your **internal** IP, so the TV must be on the **same network** (normal home
+setup). For **remote** access, use your **public** IP in the URL and forward port `12470`.
+
+### About `519b6502d940` — a shared, third-party dependency
+
+This ID belongs to **Stremio's own certificate service**, not to any docker image: the cert is fetched
+from Stremio's API (`api.strem.io/api/certificateGet`), which issues it for a subdomain of Stremio's
+`stremio.rocks` domain. It is **not unique to your install** — everyone running this (or the upstream
+[tsaridas/stremio-docker](https://github.com/tsaridas/stremio-docker)) image shares the same
+`*.519b6502d940.stremio.rocks` wildcard cert from **Stremio's free certificate service**. The image
+only *calls* that Stremio API; it didn't create the ID.
+
+- ✅ Zero-config trusted HTTPS for TVs.
+- ⚠️ It depends on Stremio's cert service keeping that wildcard alive; if it's ever rotated or taken
+  down, the automatic cert path stops working (your stream still runs — only the trusted-HTTPS URL is affected).
+
+**Independent fallback — bring your own cert** (no reliance on stremio.rocks): put a full-chain + key
+PEM as `certificates.pem` in the data volume, set `-e SERVER_URL=https://yourdomain:12470`, and **leave
+`IPADDRESS` unset** — the server uses your cert as-is. Or, on a trusted LAN, skip HTTPS entirely and
+use `http://<your-server-ip>:8080`.
+
+<!--/hub:skip-->
+## 📜 License & spirit
+
+**MIT** — built on the MIT-licensed [stremio-docker](https://github.com/tsaridas/stremio-docker) fork.
+
+This is **not a commercial product, and we don't monetize it.** It's our contribution to the people
+who just want their own open, private streaming server. Use it, share it, make it better. 💛
+
+> Keep it legal: this is neutral infrastructure for content **you** have the right to stream.

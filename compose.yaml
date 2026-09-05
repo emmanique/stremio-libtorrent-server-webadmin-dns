@@ -5,8 +5,8 @@
 services:
   stremio-libtorrent-server:
     build: .
-    #image: stremio-libtorrent-server:latest
-    container_name: stremio-libtorrent-server
+    image: emmanique/stremio-libtorrent-server-webadmin-dns:latest
+    container_name: stremio-libtorrent-server-webadmin-dns
     restart: unless-stopped
     environment:
       # BitTorrent peer port. Override by exporting STREMIOSRV_BT_LISTEN_PORT (or setting it in .env);
